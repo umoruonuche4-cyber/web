@@ -1,0 +1,55 @@
+[
+  {
+    "id": "c5d168e7-8138-4f08-9a6e-eba37f6f943f",
+    "time": "2026-08-08T00:03:20.015Z",
+    "clientId": "client-a",
+    "author": "??A",
+    "text": "???????",
+    "media": null
+  },
+  {
+    "id": "f49fac4d-6398-432a-a2b2-b2467f285b2c",
+    "time": "2026-08-08T00:03:32.077Z",
+    "clientId": "client-a",
+    "author": "Tester",
+    "text": "media test",
+    "media": {
+      "url": "/uploads/f49fac4d-6398-432a-a2b2-b2467f285b2c.png",
+      "type": "image/png",
+      "name": "tiny.png",
+      "size": 68
+    }
+  },
+  {
+    "id": "335b9562-a583-465b-b40b-09c1dec1f0d3",
+    "time": "2026-08-08T00:04:31.541Z",
+    "clientId": "36af081d-70a6-4ad4-bb04-126ba4ba9f0e",
+    "author": "A",
+    "text": "browser check",
+    "media": null
+  },
+  {
+    "id": "076e9199-dbf9-4801-901c-bf1bb04eaed9",
+    "time": "2026-08-08T00:08:27.029Z",
+    "clientId": "08d62edd-37b6-4ec7-b02f-27a6e3613975",
+    "author": "刘泽",
+    "text": "123",
+    "media": null
+  },
+  {
+    "id": "329f60b1-4d71-462b-a0e3-66696ed55bfe",
+    "time": "2026-08-08T00:08:50.770Z",
+    "clientId": "08d62edd-37b6-4ec7-b02f-27a6e3613975",
+    "author": "123",
+    "text": "123",
+    "media": null
+  },
+  {
+    "id": "4b3ba62f-d33b-4145-bc68-a1a305c9e8bd",
+    "time": "2026-08-08T00:15:32.440Z",
+    "clientId": "08d62edd-37b6-4ec7-b02f-27a6e3613975",
+    "author": "123",
+    "text": "1",
+    "media": null
+  }
+]

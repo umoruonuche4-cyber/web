@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>秘密的树洞</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="auth-panel" id="authPanel" aria-labelledby="authTitle">
+        <div class="brand-mark" aria-hidden="true">
+          <span></span>
+          <span></span>
+        </div>
+        <h1 id="authTitle">秘密的树洞</h1>
+        <p class="muted">输入共同密码后进入同一个聊天房间。</p>
+        <form class="auth-form" id="loginForm">
+          <label>
+            <span>昵称</span>
+            <input id="nameInput" name="name" maxlength="24" autocomplete="name" placeholder="比如：小刘">
+          </label>
+          <label>
+            <span>密码</span>
+            <input id="passwordInput" name="password" type="password" autocomplete="current-password" placeholder="输入密码">
+          </label>
+          <button type="submit">进入聊天</button>
+          <p class="error" id="loginError" role="alert"></p>
+        </form>
+      </section>
+
+      <section class="chat-panel hidden" id="chatPanel" aria-label="聊天">
+        <header class="chat-header">
+          <div>
+            <h1>秘密的树洞</h1>
+            <p id="connectionStatus">正在连接</p>
+          </div>
+          <div class="presence" title="当前在线设备数">
+            <span class="presence-dot" aria-hidden="true"></span>
+            <span id="onlineCount">0 在线</span>
+          </div>
+        </header>
+
+        <div class="messages" id="messages" aria-live="polite"></div>
+
+        <form class="composer" id="messageForm">
+          <div class="preview hidden" id="filePreview">
+            <div>
+              <strong id="fileName"></strong>
+              <span id="fileMeta"></span>
+            </div>
+            <button type="button" id="removeFile" aria-label="移除附件">×</button>
+          </div>
+
+          <div class="composer-row">
+            <label class="file-button" title="发送照片或视频">
+              <input id="fileInput" type="file" accept="image/*,video/*">
+              <span>＋</span>
+            </label>
+            <textarea id="messageInput" rows="1" maxlength="2000" placeholder="输入消息"></textarea>
+            <button class="send-button" type="submit">发送</button>
+          </div>
+        </form>
+      </section>
+    </main>
+
+    <template id="emptyTemplate">
+      <div class="empty-state">
+        <div class="empty-visual" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+        <p>还没有消息。</p>
+      </div>
+    </template>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "name": "secret-tree-hole-chat",
+  "version": "1.0.0",
+  "private": true,
+  "description": "秘密的树洞：a password-protected remote chat website with photo and video sharing.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
