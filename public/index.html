@@ -3,6 +3,13 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#17251d">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="秘密的树洞">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="icon" href="/icons/tree-hole.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/icons/tree-hole.svg">
     <title>秘密的树洞</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
@@ -24,45 +31,101 @@
             <span>密码</span>
             <input id="passwordInput" name="password" type="password" autocomplete="current-password" placeholder="输入密码">
           </label>
+          <label class="remember-row">
+            <input id="rememberPassword" type="checkbox" checked>
+            <span>记住密码，下次自动进入</span>
+          </label>
           <button type="submit">进入聊天</button>
           <p class="error" id="loginError" role="alert"></p>
         </form>
       </section>
 
-      <section class="chat-panel hidden" id="chatPanel" aria-label="聊天">
+      <section class="chat-panel hidden" id="chatPanel" aria-label="秘密的树洞">
         <header class="chat-header">
           <div>
             <h1>秘密的树洞</h1>
             <p id="connectionStatus">正在连接</p>
           </div>
-          <div class="presence" title="当前在线设备数">
-            <span class="presence-dot" aria-hidden="true"></span>
-            <span id="onlineCount">0 在线</span>
+          <div class="header-actions">
+            <button class="call-button" type="button" id="startCall" title="发起视频通话">视频</button>
+            <div class="presence" title="当前在线设备数">
+              <span class="presence-dot" aria-hidden="true"></span>
+              <span id="onlineCount">0 在线</span>
+            </div>
           </div>
         </header>
 
-        <div class="messages" id="messages" aria-live="polite"></div>
+        <nav class="view-tabs" aria-label="功能切换">
+          <button class="active" type="button" id="showChat">聊天</button>
+          <button type="button" id="showDiary">日记</button>
+        </nav>
 
-        <form class="composer" id="messageForm">
-          <div class="preview hidden" id="filePreview">
-            <div>
-              <strong id="fileName"></strong>
-              <span id="fileMeta"></span>
+        <div class="call-banner hidden" id="incomingCall">
+          <div>
+            <strong id="incomingName">对方</strong>
+            <span>邀请你视频通话</span>
+          </div>
+          <div class="call-banner-actions">
+            <button type="button" id="acceptCall">接听</button>
+            <button type="button" id="declineCall">拒绝</button>
+          </div>
+        </div>
+
+        <section class="view-panel chat-view" id="chatView" aria-label="聊天">
+          <div class="messages" id="messages" aria-live="polite"></div>
+
+          <form class="composer" id="messageForm">
+            <div class="preview hidden" id="filePreview">
+              <div>
+                <strong id="fileName"></strong>
+                <span id="fileMeta"></span>
+              </div>
+              <button type="button" id="removeFile" aria-label="移除附件">×</button>
             </div>
-            <button type="button" id="removeFile" aria-label="移除附件">×</button>
-          </div>
 
-          <div class="composer-row">
-            <label class="file-button" title="发送照片或视频">
-              <input id="fileInput" type="file" accept="image/*,video/*">
-              <span>＋</span>
-            </label>
-            <textarea id="messageInput" rows="1" maxlength="2000" placeholder="输入消息"></textarea>
-            <button class="send-button" type="submit">发送</button>
-          </div>
-        </form>
+            <div class="composer-row">
+              <label class="file-button" title="发送照片或视频">
+                <input id="fileInput" type="file" accept="image/*,video/*">
+                <span>+</span>
+              </label>
+              <textarea id="messageInput" rows="1" maxlength="2000" placeholder="输入消息"></textarea>
+              <button class="send-button" type="submit">发送</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="view-panel diary-view hidden" id="diaryView" aria-label="日记">
+          <form class="diary-form" id="diaryForm">
+            <input id="diaryTitle" maxlength="80" placeholder="今天的标题">
+            <textarea id="diaryText" rows="5" maxlength="12000" placeholder="写下今天想保存的话"></textarea>
+            <div class="diary-toolbar">
+              <label class="diary-file-button">
+                <input id="diaryFileInput" type="file" accept="image/*,video/*" multiple>
+                <span>添加图片/视频</span>
+              </label>
+              <button class="send-button" type="submit">保存日记</button>
+            </div>
+            <div class="diary-preview hidden" id="diaryPreview"></div>
+            <p class="diary-status" id="diaryStatus"></p>
+          </form>
+
+          <div class="diary-list" id="diaryList" aria-live="polite"></div>
+        </section>
       </section>
     </main>
+
+    <section class="call-modal hidden" id="callModal" aria-label="视频通话">
+      <div class="call-stage">
+        <video id="remoteVideo" autoplay playsinline></video>
+        <video id="localVideo" autoplay playsinline muted></video>
+        <div class="call-status" id="callStatus">正在准备视频通话</div>
+        <div class="call-controls">
+          <button type="button" id="toggleMic">麦克风</button>
+          <button type="button" id="toggleCamera">摄像头</button>
+          <button class="hangup-button" type="button" id="hangupCall">挂断</button>
+        </div>
+      </div>
+    </section>
 
     <template id="emptyTemplate">
       <div class="empty-state">
@@ -72,6 +135,17 @@
           <span></span>
         </div>
         <p>还没有消息。</p>
+      </div>
+    </template>
+
+    <template id="emptyDiaryTemplate">
+      <div class="empty-state diary-empty">
+        <div class="empty-visual" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+        <p>还没有日记。</p>
       </div>
     </template>
 

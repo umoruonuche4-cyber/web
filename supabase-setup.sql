@@ -12,6 +12,21 @@ create index if not exists treehole_messages_created_at_idx
 
 alter table public.treehole_messages enable row level security;
 
+create table if not exists public.treehole_diary (
+  id uuid primary key,
+  created_at timestamptz not null default now(),
+  client_id text not null,
+  author text not null,
+  title text not null default '',
+  text text not null default '',
+  media jsonb not null default '[]'::jsonb
+);
+
+create index if not exists treehole_diary_created_at_idx
+  on public.treehole_diary (created_at desc);
+
+alter table public.treehole_diary enable row level security;
+
 insert into storage.buckets (
   id,
   name,
@@ -23,7 +38,7 @@ values (
   'treehole-media',
   'treehole-media',
   false,
-  52428800,
+  524288000,
   array[
     'image/jpeg',
     'image/png',
