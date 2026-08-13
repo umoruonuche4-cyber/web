@@ -25,8 +25,10 @@
 
   const showChat = document.getElementById("showChat");
   const showDiary = document.getElementById("showDiary");
+  const showGoals = document.getElementById("showGoals");
   const chatView = document.getElementById("chatView");
   const diaryView = document.getElementById("diaryView");
+  const goalsView = document.getElementById("goalsView");
 
   const messagesEl = document.getElementById("messages");
   const messageForm = document.getElementById("messageForm");
@@ -46,6 +48,15 @@
   const diaryStatus = document.getElementById("diaryStatus");
   const diaryList = document.getElementById("diaryList");
   const emptyDiaryTemplate = document.getElementById("emptyDiaryTemplate");
+  const cancelDiaryEdit = document.getElementById("cancelDiaryEdit");
+  const saveDiaryButton = document.getElementById("saveDiaryButton");
+  const goalForm = document.getElementById("goalForm");
+  const goalTime = document.getElementById("goalTime");
+  const goalText = document.getElementById("goalText");
+  const saveGoalButton = document.getElementById("saveGoalButton");
+  const goalStatus = document.getElementById("goalStatus");
+  const goalList = document.getElementById("goalList");
+  const emptyGoalsTemplate = document.getElementById("emptyGoalsTemplate");
 
   const startCall = document.getElementById("startCall");
   const incomingCall = document.getElementById("incomingCall");
@@ -65,6 +76,13 @@
   let hasMessages = false;
   let hasDiary = false;
   let diaryEntries = [];
+  let editingDiaryId = null;
+  let editingDiaryMedia = [];
+  let dailyGoals = [];
+  let editingGoalId = null;
+  let messageRefreshTimer = null;
+  let messageRefreshInFlight = false;
+  let lastMessageRefreshAt = 0;
   let pendingOffer = null;
   let peerConnection = null;
   let localStream = null;
@@ -110,9 +128,12 @@
       authPanel.classList.add("hidden");
       chatPanel.classList.remove("hidden");
       renderMessages(data.messages || []);
+      if (data.messagesStale) scheduleMessageRefresh(800);
       setOnline(data.online || 0);
       connectEvents();
+      scheduleMessageRefresh(1200);
       await loadDiary();
+      await loadGoals();
       messageInput.focus();
     } catch (error) {
       loginError.textContent = friendlyError(error, "登录失败");
@@ -127,6 +148,13 @@
 
   showChat.addEventListener("click", () => switchView("chat"));
   showDiary.addEventListener("click", () => switchView("diary"));
+  showGoals.addEventListener("click", () => switchView("goals"));
+  window.addEventListener("online", () => scheduleMessageRefresh(300));
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && !chatPanel.classList.contains("hidden")) {
+      scheduleMessageRefresh(300);
+    }
+  });
 
   messageForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -145,7 +173,7 @@
     submitButton.textContent = file ? "上传中" : "发送中";
 
     try {
-      const media = file ? await prepareMedia(file) : null;
+      const media = file ? await prepareMedia(file, (percent) => setStatus(`上传中 ${percent}%：${file.name}`)) : null;
       await postJson("/api/messages", { text, media });
 
       messageInput.value = "";
@@ -167,7 +195,7 @@
     const title = diaryTitle.value.trim();
     const text = diaryText.value.trim();
     const files = Array.from(diaryFileInput.files || []).slice(0, 8);
-    if (!title && !text && files.length === 0) return;
+    if (!title && !text && files.length === 0 && !editingDiaryMedia.length) return;
 
     const oversized = files.find((file) => file.size > maxFileBytes);
     if (oversized) {
@@ -183,19 +211,33 @@
       const media = [];
       for (let index = 0; index < files.length; index += 1) {
         setDiaryStatus(`正在上传 ${index + 1}/${files.length}：${files[index].name}`);
-        media.push(await prepareMedia(files[index]));
+        media.push(await prepareMedia(files[index], (percent) => {
+          setDiaryStatus(`正在上传 ${index + 1}/${files.length}：${percent}% ${files[index].name}`);
+        }));
       }
 
-      await postJson("/api/diary", { title, text, media });
-      diaryTitle.value = "";
-      diaryText.value = "";
-      clearDiaryFiles();
-      setDiaryStatus("日记已保存");
+      if (editingDiaryId) {
+        await putJson(`/api/diary/${editingDiaryId}`, {
+          title,
+          text,
+          existingMedia: editingDiaryMedia,
+          media
+        });
+        setDiaryStatus("日记已更新");
+        await loadDiary();
+        cancelDiaryEditing();
+      } else {
+        await postJson("/api/diary", { title, text, media });
+        diaryTitle.value = "";
+        diaryText.value = "";
+        clearDiaryFiles();
+        setDiaryStatus("日记已保存");
+      }
     } catch (error) {
       setDiaryStatus(error.message || "保存失败");
     } finally {
       submitButton.disabled = false;
-      submitButton.textContent = "保存日记";
+      submitButton.textContent = editingDiaryId ? "更新日记" : "保存日记";
       diaryText.focus();
     }
   });
@@ -222,6 +264,8 @@
   });
 
   diaryFileInput.addEventListener("change", renderDiaryPreview);
+  cancelDiaryEdit.addEventListener("click", cancelDiaryEditing);
+  goalForm.addEventListener("submit", handleGoalSubmit);
   removeFile.addEventListener("click", clearFile);
   startCall.addEventListener("click", startOutgoingCall);
   acceptCall.addEventListener("click", acceptIncomingCall);
@@ -258,6 +302,18 @@
     return data;
   }
 
+  async function putJson(url, payload) {
+    const response = await fetchWithTimeout(url, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `请求失败：${response.status}`);
+    return data;
+  }
+
   async function fetchWithTimeout(url, options = {}) {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -282,7 +338,7 @@
     return error.message || fallback;
   }
 
-  async function prepareMedia(file) {
+  async function prepareMedia(file, onProgress = null) {
     if (directUpload) {
       const signed = await postJson("/api/upload-url", {
         name: file.name,
@@ -291,7 +347,7 @@
       });
 
       setStatus(`正在上传 ${file.name}`);
-      await uploadToSignedUrl(signed.uploadUrl, file);
+      await uploadToSignedUrl(signed.uploadUrl, file, onProgress);
       return signed.media;
     }
 
@@ -301,20 +357,46 @@
     };
   }
 
-  async function uploadToSignedUrl(uploadUrl, file) {
+  async function uploadToSignedUrl(uploadUrl, file, onProgress = null) {
+    if (typeof XMLHttpRequest === "undefined") {
+      const form = new FormData();
+      form.append("cacheControl", "3600");
+      form.append("", file);
+      const response = await fetch(uploadUrl, {
+        method: "PUT",
+        body: form
+      });
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new Error(`上传失败：${response.status} ${text}`);
+      }
+      return;
+    }
+
     const form = new FormData();
     form.append("cacheControl", "3600");
     form.append("", file);
 
-    const response = await fetch(uploadUrl, {
-      method: "PUT",
-      body: form
+    await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", uploadUrl);
+      xhr.upload.addEventListener("progress", (event) => {
+        if (event.lengthComputable && onProgress) {
+          onProgress(Math.round((event.loaded / event.total) * 100));
+        }
+      });
+      xhr.addEventListener("load", () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve();
+        } else {
+          reject(new Error(`上传失败：${xhr.status} ${xhr.responseText || ""}`));
+        }
+      });
+      xhr.addEventListener("error", () => reject(new Error("上传失败，请检查网络后重试")));
+      xhr.addEventListener("timeout", () => reject(new Error("上传超时，请换稳定网络后重试")));
+      xhr.timeout = 0;
+      xhr.send(form);
     });
-
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new Error(`上传失败：${response.status} ${text}`);
-    }
   }
 
   function connectEvents() {
@@ -334,6 +416,13 @@
     events.addEventListener("diary", (event) => {
       addDiaryEntry(JSON.parse(event.data));
     });
+    events.addEventListener("diary-update", () => {
+      loadDiary();
+    });
+    events.addEventListener("goals", (event) => {
+      const data = JSON.parse(event.data);
+      renderGoals(data.goals || []);
+    });
     events.addEventListener("presence", (event) => {
       const data = JSON.parse(event.data);
       setOnline(data.online || 0);
@@ -348,11 +437,15 @@
 
   function switchView(view) {
     const diaryActive = view === "diary";
+    const goalsActive = view === "goals";
     showDiary.classList.toggle("active", diaryActive);
-    showChat.classList.toggle("active", !diaryActive);
+    showGoals.classList.toggle("active", goalsActive);
+    showChat.classList.toggle("active", !diaryActive && !goalsActive);
     diaryView.classList.toggle("hidden", !diaryActive);
-    chatView.classList.toggle("hidden", diaryActive);
+    goalsView.classList.toggle("hidden", !goalsActive);
+    chatView.classList.toggle("hidden", diaryActive || goalsActive);
     if (diaryActive) diaryText.focus();
+    if (goalsActive) goalText.focus();
   }
 
   function setOnline(count) {
@@ -378,6 +471,8 @@
   }
 
   function addMessage(message) {
+    if (message.id && messagesEl.querySelector(`[data-id="${message.id}"]`)) return;
+
     if (!hasMessages) {
       messagesEl.textContent = "";
       hasMessages = true;
@@ -418,6 +513,32 @@
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
+  function scheduleMessageRefresh(delay = 1000) {
+    window.clearTimeout(messageRefreshTimer);
+    messageRefreshTimer = window.setTimeout(() => {
+      refreshMessages().catch(() => {});
+    }, delay);
+  }
+
+  async function refreshMessages() {
+    if (messageRefreshInFlight || chatPanel.classList.contains("hidden")) return;
+    if (Date.now() - lastMessageRefreshAt < 1200) return;
+
+    messageRefreshInFlight = true;
+    lastMessageRefreshAt = Date.now();
+
+    try {
+      const data = await getJson(`/api/messages?t=${Date.now()}`);
+      renderMessages(data.messages || []);
+      if (data.stale) scheduleMessageRefresh(2500);
+    } catch (error) {
+      setStatus(error.message || "History loading failed, retrying...");
+      scheduleMessageRefresh(3000);
+    } finally {
+      messageRefreshInFlight = false;
+    }
+  }
+
   async function loadDiary() {
     try {
       const data = await getJson("/api/diary");
@@ -425,6 +546,127 @@
     } catch (error) {
       setDiaryStatus(error.message || "日记加载失败");
     }
+  }
+
+  async function loadGoals() {
+    try {
+      const data = await getJson("/api/goals");
+      renderGoals(data.goals || []);
+    } catch (error) {
+      setGoalStatus(error.message || "目标加载失败");
+    }
+  }
+
+  async function handleGoalSubmit(event) {
+    event.preventDefault();
+    const text = goalText.value.trim();
+    if (!text) return;
+
+    if (editingGoalId) {
+      const goal = dailyGoals.find((item) => item.id === editingGoalId);
+      if (goal) {
+        goal.text = text;
+        goal.time = goalTime.value;
+      }
+    } else {
+      dailyGoals.push({
+        id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()),
+        text,
+        time: goalTime.value,
+        doneDates: []
+      });
+    }
+
+    await saveGoals();
+    resetGoalForm();
+  }
+
+  async function saveGoals() {
+    saveGoalButton.disabled = true;
+    try {
+      const data = await putJson("/api/goals", { goals: dailyGoals });
+      renderGoals(data.goals || []);
+      setGoalStatus("目标已保存");
+    } catch (error) {
+      setGoalStatus(error.message || "目标保存失败");
+    } finally {
+      saveGoalButton.disabled = false;
+    }
+  }
+
+  function renderGoals(goals) {
+    dailyGoals = goals.slice().sort((a, b) => (a.time || "99:99").localeCompare(b.time || "99:99"));
+    goalList.textContent = "";
+    if (!dailyGoals.length) {
+      goalList.appendChild(emptyGoalsTemplate.content.cloneNode(true));
+      return;
+    }
+
+    const today = todayKey();
+    dailyGoals.forEach((goal) => {
+      const item = document.createElement("article");
+      item.className = "goal-item";
+      item.dataset.id = goal.id;
+
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = Array.isArray(goal.doneDates) && goal.doneDates.includes(today);
+      checkbox.addEventListener("change", () => toggleGoalDone(goal.id, checkbox.checked));
+
+      const content = document.createElement("div");
+      content.className = "goal-content";
+
+      const title = document.createElement("strong");
+      title.textContent = goal.text;
+
+      const time = document.createElement("span");
+      time.textContent = goal.time ? `每天 ${goal.time}` : "每天重复";
+
+      content.append(title, time);
+
+      const editButton = document.createElement("button");
+      editButton.type = "button";
+      editButton.className = "entry-action";
+      editButton.textContent = "编辑";
+      editButton.addEventListener("click", () => startGoalEditing(goal));
+
+      item.append(checkbox, content, editButton);
+      goalList.appendChild(item);
+    });
+  }
+
+  async function toggleGoalDone(id, done) {
+    try {
+      const data = await postJson(`/api/goals/${id}/done`, {
+        date: todayKey(),
+        done
+      });
+      const index = dailyGoals.findIndex((goal) => goal.id === id);
+      if (index !== -1) dailyGoals[index] = data.goal;
+      renderGoals(dailyGoals);
+    } catch (error) {
+      setGoalStatus(error.message || "完成状态保存失败");
+      await loadGoals();
+    }
+  }
+
+  function startGoalEditing(goal) {
+    editingGoalId = goal.id;
+    goalTime.value = goal.time || "";
+    goalText.value = goal.text || "";
+    saveGoalButton.textContent = "更新";
+    goalText.focus();
+  }
+
+  function resetGoalForm() {
+    editingGoalId = null;
+    goalTime.value = "";
+    goalText.value = "";
+    saveGoalButton.textContent = "添加";
+  }
+
+  function setGoalStatus(text) {
+    goalStatus.textContent = text;
   }
 
   function renderDiaryEntries(entries) {
@@ -460,7 +702,13 @@
     meta.dateTime = entry.time;
     meta.textContent = `${entry.author || "我"} · ${formatDateTime(entry.time)}`;
 
-    header.append(title, meta);
+    const editButton = document.createElement("button");
+    editButton.className = "entry-action";
+    editButton.type = "button";
+    editButton.textContent = "编辑";
+    editButton.addEventListener("click", () => startDiaryEditing(entry));
+
+    header.append(title, meta, editButton);
     article.appendChild(header);
 
     if (entry.text) {
@@ -479,6 +727,29 @@
     }
 
     diaryList.prepend(article);
+  }
+
+  function startDiaryEditing(entry) {
+    editingDiaryId = entry.id;
+    editingDiaryMedia = Array.isArray(entry.media) ? entry.media.slice() : [];
+    diaryTitle.value = entry.title || "";
+    diaryText.value = entry.text || "";
+    clearDiaryFiles();
+    cancelDiaryEdit.classList.remove("hidden");
+    saveDiaryButton.textContent = "更新日记";
+    setDiaryStatus(`正在编辑：${entry.title || "没有标题的日记"}`);
+    diaryTitle.focus();
+    diaryForm.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function cancelDiaryEditing() {
+    editingDiaryId = null;
+    editingDiaryMedia = [];
+    diaryTitle.value = "";
+    diaryText.value = "";
+    clearDiaryFiles();
+    cancelDiaryEdit.classList.add("hidden");
+    saveDiaryButton.textContent = "保存日记";
   }
 
   function renderDiaryPreview() {
@@ -766,5 +1037,13 @@
       hour: "2-digit",
       minute: "2-digit"
     });
+  }
+
+  function todayKey() {
+    const date = new Date();
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
   }
 })();

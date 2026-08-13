@@ -19,13 +19,31 @@ create table if not exists public.treehole_diary (
   author text not null,
   title text not null default '',
   text text not null default '',
-  media jsonb not null default '[]'::jsonb
+  media jsonb not null default '[]'::jsonb,
+  edited_at timestamptz
 );
+
+alter table public.treehole_diary
+  add column if not exists edited_at timestamptz;
 
 create index if not exists treehole_diary_created_at_idx
   on public.treehole_diary (created_at desc);
 
 alter table public.treehole_diary enable row level security;
+
+create table if not exists public.treehole_goals (
+  id uuid primary key,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  goal_time text not null default '',
+  text text not null default '',
+  done_dates jsonb not null default '[]'::jsonb
+);
+
+create index if not exists treehole_goals_time_idx
+  on public.treehole_goals (goal_time asc);
+
+alter table public.treehole_goals enable row level security;
 
 insert into storage.buckets (
   id,
@@ -38,7 +56,7 @@ values (
   'treehole-media',
   'treehole-media',
   false,
-  524288000,
+  2147483648,
   array[
     'image/jpeg',
     'image/png',

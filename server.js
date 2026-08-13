@@ -9,7 +9,7 @@ const PORT = Number(process.env.PORT || 3000);
 const PASSWORD = process.env.CHAT_PASSWORD || "liu123";
 const COOKIE_NAME = "treehole_session";
 const SESSION_MS = 7 * 24 * 60 * 60 * 1000;
-const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_MB || 500) * 1024 * 1024;
+const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_MB || 2048) * 1024 * 1024;
 const MAX_BODY_BYTES = Math.ceil(MAX_UPLOAD_BYTES * 1.45) + 1024 * 1024;
 const MAX_TEXT_LENGTH = 2000;
 const MAX_DIARY_TEXT_LENGTH = 12000;
@@ -22,6 +22,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, "data");
 const UPLOAD_DIR = path.join(DATA_DIR, "uploads");
 const MESSAGE_FILE = path.join(DATA_DIR, "messages.json");
 const DIARY_FILE = path.join(DATA_DIR, "diary.json");
+const GOALS_FILE = path.join(DATA_DIR, "goals.json");
 const SUPABASE_URL = String(process.env.SUPABASE_URL || "").replace(/\/+$/, "");
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || "";
 const SUPABASE_BUCKET = process.env.SUPABASE_BUCKET || "treehole-media";
@@ -31,8 +32,11 @@ const clients = new Map();
 const sessions = new Map();
 let messages = [];
 let diaryEntries = [];
+let dailyGoals = [];
 let saveQueue = Promise.resolve();
 let saveDiaryQueue = Promise.resolve();
+let saveGoalsQueue = Promise.resolve();
+let lastMessagesLoadAt = 0;
 
 const mimeTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -88,12 +92,24 @@ async function ensureDataFiles() {
     }
     diaryEntries = [];
   }
+
+  try {
+    const raw = await fsp.readFile(GOALS_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    dailyGoals = Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      console.warn("Could not load goals:", error.message);
+    }
+    dailyGoals = [];
+  }
 }
 
 async function safeLoadSupabaseData() {
   const results = await Promise.allSettled([
     loadMessagesFromSupabase(),
-    loadDiaryFromSupabase()
+    loadDiaryFromSupabase(),
+    loadGoalsFromSupabase()
   ]);
 
   if (results[0].status === "rejected") {
@@ -104,6 +120,11 @@ async function safeLoadSupabaseData() {
   if (results[1].status === "rejected") {
     console.warn("Supabase diary unavailable at startup:", results[1].reason.message);
     diaryEntries = [];
+  }
+
+  if (results[2].status === "rejected") {
+    console.warn("Supabase goals unavailable at startup:", results[2].reason.message);
+    dailyGoals = [];
   }
 }
 
@@ -258,6 +279,14 @@ function queueDiarySave() {
   return saveDiaryQueue;
 }
 
+function queueGoalsSave() {
+  const payload = JSON.stringify(dailyGoals, null, 2);
+  saveGoalsQueue = saveGoalsQueue
+    .then(() => fsp.writeFile(GOALS_FILE, payload, "utf8"))
+    .catch((error) => console.warn("Could not save goals:", error.message));
+  return saveGoalsQueue;
+}
+
 function supabaseHeaders(extra = {}) {
   return {
     apikey: SUPABASE_SERVICE_KEY,
@@ -285,7 +314,18 @@ function appDiaryFromRow(row) {
     author: row.author,
     title: row.title || "",
     text: row.text || "",
-    media: Array.isArray(row.media) ? row.media : []
+    media: Array.isArray(row.media) ? row.media : [],
+    editedAt: row.edited_at || null
+  };
+}
+
+function appGoalFromRow(row) {
+  return {
+    id: row.id,
+    time: row.goal_time || "",
+    text: row.text || "",
+    doneDates: Array.isArray(row.done_dates) ? row.done_dates : [],
+    updatedAt: row.updated_at || row.created_at || new Date().toISOString()
   };
 }
 
@@ -298,6 +338,26 @@ async function loadMessagesFromSupabase() {
 
   const rows = await response.json();
   messages = rows.map(appMessageFromRow).reverse();
+  lastMessagesLoadAt = Date.now();
+}
+
+async function refreshMessagesFromStore() {
+  if (!USE_SUPABASE) return;
+  await loadMessagesFromSupabase();
+}
+
+async function tryRefreshMessagesFromStore() {
+  if (!USE_SUPABASE) {
+    return { ok: true, stale: false };
+  }
+
+  try {
+    await refreshMessagesFromStore();
+    return { ok: true, stale: false };
+  } catch (error) {
+    console.warn("Could not refresh Supabase messages:", error.message);
+    return { ok: false, stale: true, error: error.message };
+  }
 }
 
 async function loadDiaryFromSupabase() {
@@ -309,6 +369,17 @@ async function loadDiaryFromSupabase() {
 
   const rows = await response.json();
   diaryEntries = rows.map(appDiaryFromRow).reverse();
+}
+
+async function loadGoalsFromSupabase() {
+  const url = `${SUPABASE_URL}/rest/v1/treehole_goals?select=*&order=goal_time.asc,text.asc`;
+  const response = await fetch(url, { headers: supabaseHeaders() });
+  if (!response.ok) {
+    throw new Error(`Could not load Supabase goals: ${response.status} ${await response.text()}`);
+  }
+
+  const rows = await response.json();
+  dailyGoals = rows.map(appGoalFromRow);
 }
 
 async function saveMessageToSupabase(message) {
@@ -349,12 +420,57 @@ async function saveDiaryToSupabase(entry) {
       author: entry.author,
       title: entry.title,
       text: entry.text,
-      media: entry.media
+      media: entry.media,
+      edited_at: entry.editedAt || null
     })
   });
 
   if (!response.ok) {
     const error = new Error(`Could not save diary: ${response.status} ${await response.text()}`);
+    error.statusCode = 502;
+    throw error;
+  }
+}
+
+async function upsertDiaryToSupabase(entry) {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/treehole_diary?id=eq.${encodeURIComponent(entry.id)}`, {
+    method: "PATCH",
+    headers: supabaseHeaders({
+      "Content-Type": "application/json",
+      Prefer: "return=minimal"
+    }),
+    body: JSON.stringify({
+      title: entry.title,
+      text: entry.text,
+      media: entry.media
+    })
+  });
+
+  if (!response.ok) {
+    const error = new Error(`Could not update diary: ${response.status} ${await response.text()}`);
+    error.statusCode = 502;
+    throw error;
+  }
+}
+
+async function upsertGoalToSupabase(goal) {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/treehole_goals`, {
+    method: "POST",
+    headers: supabaseHeaders({
+      "Content-Type": "application/json",
+      Prefer: "resolution=merge-duplicates,return=minimal"
+    }),
+    body: JSON.stringify({
+      id: goal.id,
+      goal_time: goal.time,
+      text: goal.text,
+      done_dates: goal.doneDates,
+      updated_at: goal.updatedAt
+    })
+  });
+
+  if (!response.ok) {
+    const error = new Error(`Could not save goal: ${response.status} ${await response.text()}`);
     error.statusCode = 502;
     throw error;
   }
@@ -384,6 +500,24 @@ async function persistDiary(entry) {
   await queueDiarySave();
 }
 
+async function persistDiaryUpdate(entry) {
+  if (USE_SUPABASE) {
+    await upsertDiaryToSupabase(entry);
+    return;
+  }
+
+  await queueDiarySave();
+}
+
+async function persistGoals() {
+  if (USE_SUPABASE) {
+    await Promise.all(dailyGoals.map(upsertGoalToSupabase));
+    return;
+  }
+
+  await queueGoalsSave();
+}
+
 function cleanName(value) {
   const name = String(value || "").trim().slice(0, 24);
   return name || "访客";
@@ -395,6 +529,20 @@ function cleanText(value) {
 
 function cleanDiaryText(value) {
   return String(value || "").trim().slice(0, MAX_DIARY_TEXT_LENGTH);
+}
+
+function cleanGoalText(value) {
+  return String(value || "").trim().slice(0, 120);
+}
+
+function cleanGoalTime(value) {
+  const time = String(value || "").trim();
+  return /^\d{2}:\d{2}$/.test(time) ? time : "";
+}
+
+function cleanDate(value) {
+  const date = String(value || "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : new Date().toISOString().slice(0, 10);
 }
 
 function cleanTitle(value) {
@@ -480,16 +628,31 @@ async function handleLogin(req, res) {
   const name = cleanName(body.name);
   const clientId = String(body.clientId || crypto.randomUUID());
   const { token } = createSession(name, clientId);
+  const refresh = await tryRefreshMessagesFromStore();
 
   json(res, 200, {
     ok: true,
     name,
     messages,
+    messagesStale: refresh.stale,
     online: publicClientCount(),
     maxUploadMb: Math.round(MAX_UPLOAD_BYTES / 1024 / 1024),
     directUpload: USE_SUPABASE
   }, {
     "Set-Cookie": sessionCookie(req, token)
+  });
+}
+
+async function handleGetMessages(req, res) {
+  const session = requireSession(req, res);
+  if (!session) return;
+
+  const refresh = await tryRefreshMessagesFromStore();
+  json(res, 200, {
+    ok: true,
+    messages,
+    stale: refresh.stale,
+    lastLoadedAt: lastMessagesLoadAt
   });
 }
 
@@ -701,6 +864,106 @@ async function handleCreateDiary(req, res) {
   json(res, 201, { ok: true, entry });
 }
 
+async function handleUpdateDiary(req, res, id) {
+  const session = requireSession(req, res);
+  if (!session) return;
+
+  const entry = diaryEntries.find((item) => item.id === id);
+  if (!entry) {
+    json(res, 404, { error: "Diary entry not found" });
+    return;
+  }
+
+  const body = await readBody(req);
+  const title = cleanTitle(body.title);
+  const text = cleanDiaryText(body.text);
+  const existingMedia = Array.isArray(body.existingMedia) ? body.existingMedia.map(mediaFromUploadedReference).filter(Boolean) : [];
+  const newMedia = await normalizeMediaList(body.media, id);
+  if (!title && !text && existingMedia.length === 0 && newMedia.length === 0) {
+    json(res, 400, { error: "Diary entry cannot be empty" });
+    return;
+  }
+
+  entry.title = title;
+  entry.text = text;
+  entry.media = existingMedia.concat(newMedia).slice(0, 8);
+  entry.editedAt = new Date().toISOString();
+  await persistDiaryUpdate(entry);
+  broadcast("diary-update", entry);
+  json(res, 200, { ok: true, entry });
+}
+
+async function handleGetGoals(req, res) {
+  const session = requireSession(req, res);
+  if (!session) return;
+
+  if (USE_SUPABASE) {
+    try {
+      await loadGoalsFromSupabase();
+    } catch (error) {
+      console.warn("Could not refresh goals:", error.message);
+    }
+  }
+
+  json(res, 200, {
+    ok: true,
+    goals: dailyGoals
+  });
+}
+
+async function handleSaveGoals(req, res) {
+  const session = requireSession(req, res);
+  if (!session) return;
+
+  const body = await readBody(req);
+  const incoming = Array.isArray(body.goals) ? body.goals.slice(0, 50) : [];
+  const existingDoneDates = new Map(dailyGoals.map((goal) => [goal.id, goal.doneDates]));
+  dailyGoals = incoming
+    .map((goal) => {
+      const id = String(goal.id || crypto.randomUUID());
+      const text = cleanGoalText(goal.text);
+      return {
+        id,
+        time: cleanGoalTime(goal.time),
+        text,
+        doneDates: Array.from(new Set(Array.isArray(goal.doneDates) ? goal.doneDates.filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(String(date))) : existingDoneDates.get(id) || [])),
+        updatedAt: new Date().toISOString()
+      };
+    })
+    .filter((goal) => goal.text)
+    .sort((a, b) => (a.time || "99:99").localeCompare(b.time || "99:99") || a.text.localeCompare(b.text));
+
+  await persistGoals();
+  broadcast("goals", { goals: dailyGoals });
+  json(res, 200, { ok: true, goals: dailyGoals });
+}
+
+async function handleToggleGoal(req, res, id) {
+  const session = requireSession(req, res);
+  if (!session) return;
+
+  const goal = dailyGoals.find((item) => item.id === id);
+  if (!goal) {
+    json(res, 404, { error: "Goal not found" });
+    return;
+  }
+
+  const body = await readBody(req);
+  const date = cleanDate(body.date);
+  const doneDates = new Set(Array.isArray(goal.doneDates) ? goal.doneDates : []);
+  if (body.done === false) {
+    doneDates.delete(date);
+  } else {
+    doneDates.add(date);
+  }
+
+  goal.doneDates = Array.from(doneDates).sort();
+  goal.updatedAt = new Date().toISOString();
+  await persistGoals();
+  broadcast("goals", { goals: dailyGoals });
+  json(res, 200, { ok: true, goal });
+}
+
 async function handleCallSignal(req, res) {
   const session = getSession(req);
   if (!session) {
@@ -772,7 +1035,7 @@ async function handleMedia(req, res, url) {
   Readable.fromWeb(response.body).pipe(res);
 }
 
-function handleEvents(req, res) {
+async function handleEvents(req, res) {
   const session = getSession(req);
   if (!session) {
     json(res, 401, { error: "请先输入密码登录" });
@@ -792,9 +1055,12 @@ function handleEvents(req, res) {
     "X-Accel-Buffering": "no"
   });
 
+  const refresh = await tryRefreshMessagesFromStore();
   sendEvent(res, "init", {
     messages,
-    online: publicClientCount()
+    online: publicClientCount(),
+    stale: refresh.stale,
+    lastLoadedAt: lastMessagesLoadAt
   });
   broadcastPresence();
 
@@ -867,6 +1133,11 @@ async function router(req, res) {
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/api/messages") {
+      await handleGetMessages(req, res);
+      return;
+    }
+
     if (req.method === "GET" && url.pathname === "/api/diary") {
       await handleGetDiary(req, res);
       return;
@@ -874,6 +1145,28 @@ async function router(req, res) {
 
     if (req.method === "POST" && url.pathname === "/api/diary") {
       await handleCreateDiary(req, res);
+      return;
+    }
+
+    const diaryMatch = url.pathname.match(/^\/api\/diary\/([0-9a-f-]+)$/i);
+    if (req.method === "PUT" && diaryMatch) {
+      await handleUpdateDiary(req, res, diaryMatch[1]);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/goals") {
+      await handleGetGoals(req, res);
+      return;
+    }
+
+    if (req.method === "PUT" && url.pathname === "/api/goals") {
+      await handleSaveGoals(req, res);
+      return;
+    }
+
+    const goalMatch = url.pathname.match(/^\/api\/goals\/([0-9a-f-]+)\/done$/i);
+    if (req.method === "POST" && goalMatch) {
+      await handleToggleGoal(req, res, goalMatch[1]);
       return;
     }
 
@@ -888,7 +1181,7 @@ async function router(req, res) {
     }
 
     if (req.method === "GET" && url.pathname === "/api/events") {
-      handleEvents(req, res);
+      await handleEvents(req, res);
       return;
     }
 

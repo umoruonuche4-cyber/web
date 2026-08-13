@@ -53,13 +53,17 @@ Render Free 的本地文件会在重启、重新部署或休眠后丢失，所�
 
 ```text
 CHAT_PASSWORD=liu123
-MAX_UPLOAD_MB=500
+MAX_UPLOAD_MB=2048
 SUPABASE_URL=你的 Supabase Project URL
 SUPABASE_SERVICE_ROLE_KEY=你的 Supabase service_role key 或 sb_secret key
 SUPABASE_BUCKET=treehole-media
 ```
 
 不用设置 `DATA_DIR`，也不用添加 Disk。
+
+如果要尽量支持 1GB 以上视频，保持 `MAX_UPLOAD_MB=2048`，并重新运行 `supabase-setup.sql`。代码会使用 Supabase 直传，避免视频先经过 Render；但 Supabase 免费项目的单文件大小仍可能被平台限制。要稳定上传超过 1GB，通常需要 Supabase 付费项目或更换支持大文件的对象存储。
+
+这次新增了日记编辑和每日目标，也需要在 Supabase SQL Editor 里重新运行一次 `supabase-setup.sql`。
 
 ### 4. Render 构建设置
 
