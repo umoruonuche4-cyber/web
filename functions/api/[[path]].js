@@ -46,7 +46,8 @@ export async function onRequest(context) {
     if (request.method === "GET" && pathname === "/api/call-signals") return handleGetCallSignals(request, env, url);
     if (request.method === "GET" && pathname.startsWith("/api/media/")) return handleMedia(request, env, pathname);
     if (request.method === "GET" && pathname === "/api/events") return handleEvents(request, env);
-    if (request.method === "GET" && pathname === "/api/health") return json({ ok: true, cloudflare: true });
+    if (request.method === "GET" && pathname === "/api/health") return json({ ok: true, cloudflare: true, version: "2026-08-20-debug-1" });
+    if (request.method === "GET" && pathname === "/api/debug") return handleDebug(env);
 
     return json({ error: "Not found" }, 404);
   } catch (error) {
@@ -380,6 +381,33 @@ async function handleEvents(request, env) {
       "Cache-Control": "no-cache"
     }
   });
+}
+
+async function handleDebug(env) {
+  const result = {
+    ok: true,
+    version: "2026-08-20-debug-1",
+    env: {
+      CHAT_PASSWORD: Boolean(env.CHAT_PASSWORD),
+      SESSION_SECRET: Boolean(env.SESSION_SECRET),
+      SUPABASE_URL: Boolean(env.SUPABASE_URL),
+      SUPABASE_URL_FORMAT_OK: /^https:\/\/.+\.supabase\.co$/i.test(String(env.SUPABASE_URL || "").replace(/\/+$/, "")),
+      SUPABASE_SERVICE_ROLE_KEY: Boolean(env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_SECRET_KEY),
+      SUPABASE_BUCKET: Boolean(env.SUPABASE_BUCKET),
+      MAX_UPLOAD_MB: Boolean(env.MAX_UPLOAD_MB)
+    },
+    supabase: null
+  };
+
+  try {
+    const rows = await supabase(env, "/rest/v1/treehole_messages?select=id&limit=1");
+    result.supabase = { ok: true, treehole_messages: Array.isArray(rows) };
+  } catch (error) {
+    result.ok = false;
+    result.supabase = { ok: false, error: error.message };
+  }
+
+  return json(result, result.ok ? 200 : 500);
 }
 
 async function loadMessages(env) {
