@@ -453,14 +453,28 @@ async function supabase(env, path, options = {}) {
     })
   });
   const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
-  if (!response.ok) throw Object.assign(new Error(`Supabase error ${response.status}: ${text}`), { statusCode: 502 });
+  const data = text ? parseJsonOrText(text) : null;
+  if (!response.ok) {
+    const detail = typeof data === "string" ? data.slice(0, 500) : JSON.stringify(data);
+    throw Object.assign(new Error(`Supabase error ${response.status}: ${detail}`), { statusCode: 502 });
+  }
+  if (typeof data === "string") {
+    throw Object.assign(new Error(`Supabase returned non-JSON response: ${data.slice(0, 200)}`), { statusCode: 502 });
+  }
   return data;
 }
 
 function supabaseHeaders(env, extra = {}) {
   const key = getServiceKey(env);
   return { apikey: key, Authorization: `Bearer ${key}`, ...extra };
+}
+
+function parseJsonOrText(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
 }
 
 async function requireSession(request, env) {
@@ -543,8 +557,19 @@ function base64UrlDecode(value) {
 
 function getPassword(env) { return env.CHAT_PASSWORD || "liu123"; }
 function getSecret(env) { return env.SESSION_SECRET || getPassword(env); }
-function getSupabaseUrl(env) { return String(env.SUPABASE_URL || "").replace(/\/+$/, ""); }
-function getServiceKey(env) { return env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_SECRET_KEY || ""; }
+function getSupabaseUrl(env) {
+  const value = String(env.SUPABASE_URL || "").replace(/\/+$/, "");
+  if (!value) throw Object.assign(new Error("SUPABASE_URL 没有配置"), { statusCode: 500 });
+  if (!/^https:\/\/.+\.supabase\.co$/i.test(value)) {
+    throw Object.assign(new Error("SUPABASE_URL 格式不对，应该像 https://xxxx.supabase.co，不要带 /rest/v1"), { statusCode: 500 });
+  }
+  return value;
+}
+function getServiceKey(env) {
+  const value = env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_SECRET_KEY || "";
+  if (!value) throw Object.assign(new Error("SUPABASE_SERVICE_ROLE_KEY 没有配置"), { statusCode: 500 });
+  return value;
+}
 function getBucket(env) { return env.SUPABASE_BUCKET || "treehole-media"; }
 function getMaxUploadMb(env) { return Number(env.MAX_UPLOAD_MB || 2048); }
 function cleanName(value) { return String(value || "").trim().slice(0, 24) || "访客"; }

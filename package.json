@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "pages:dev": "wrangler pages dev public",
-    "pages:deploy": "wrangler pages deploy public --project-name secret-tree-hole"
+    "pages:deploy": "wrangler pages deploy public --project-name web"
   },
   "engines": {
     "node": ">=18"
