@@ -3,7 +3,6 @@ const SESSION_SECONDS = 7 * 24 * 60 * 60;
 const MAX_MESSAGES = 500;
 const MAX_DIARY_ENTRIES = 300;
 const MAX_CALL_SIGNALS = 120;
-const PRESENCE_SECONDS = 45;
 
 const uploadExtensions = new Map([
   ["image/jpeg", ".jpg"],
@@ -24,7 +23,6 @@ export async function onRequest(context) {
     if (request.method === "POST" && pathname === "/api/login") return handleLogin(request, env);
     if (request.method === "GET" && pathname === "/api/messages") return handleGetMessages(request, env);
     if (request.method === "POST" && pathname === "/api/messages") return handleCreateMessage(request, env);
-    if (request.method === "POST" && pathname === "/api/presence") return handlePresence(request, env);
     if (request.method === "GET" && pathname === "/api/diary") return handleGetDiary(request, env);
     if (request.method === "POST" && pathname === "/api/diary") return handleCreateDiary(request, env);
 
@@ -65,9 +63,7 @@ async function handleLogin(request, env) {
   const name = cleanName(body.name);
   const clientId = String(body.clientId || crypto.randomUUID());
   const token = await createSessionToken(env, { name, clientId, exp: Math.floor(Date.now() / 1000) + SESSION_SECONDS });
-  await updatePresence(env, { clientId, name });
   const messages = await loadMessages(env);
-  const online = await countOnline(env);
 
   return json({
     ok: true,
@@ -75,7 +71,7 @@ async function handleLogin(request, env) {
     name,
     messages,
     messagesStale: false,
-    online,
+    online: 1,
     maxUploadMb: getMaxUploadMb(env),
     directUpload: true
   }, 200, {
@@ -84,15 +80,8 @@ async function handleLogin(request, env) {
 }
 
 async function handleGetMessages(request, env) {
-  const session = await requireSession(request, env);
-  await updatePresence(env, session);
-  return json({ ok: true, messages: await loadMessages(env), stale: false, online: await countOnline(env), lastLoadedAt: Date.now() });
-}
-
-async function handlePresence(request, env) {
-  const session = await requireSession(request, env);
-  await updatePresence(env, session);
-  return json({ ok: true, online: await countOnline(env) });
+  await requireSession(request, env);
+  return json({ ok: true, messages: await loadMessages(env), stale: false, lastLoadedAt: Date.now() });
 }
 
 async function handleCreateMessage(request, env) {
@@ -384,9 +373,8 @@ async function handleGetCallSignals(request, env, url) {
 }
 
 async function handleEvents(request, env) {
-  const session = await requireSession(request, env);
-  await updatePresence(env, session);
-  const body = `event: init\ndata: ${JSON.stringify({ messages: await loadMessages(env), online: await countOnline(env), stale: false })}\n\n`;
+  await requireSession(request, env);
+  const body = `event: init\ndata: ${JSON.stringify({ messages: await loadMessages(env), online: 1, stale: false })}\n\n`;
   return new Response(body, {
     headers: {
       "Content-Type": "text/event-stream; charset=utf-8",
@@ -413,8 +401,7 @@ async function handleDebug(env) {
 
   try {
     const rows = await supabase(env, "/rest/v1/treehole_messages?select=id&limit=1");
-    const presenceRows = await supabase(env, "/rest/v1/treehole_presence?select=client_id&limit=1");
-    result.supabase = { ok: true, treehole_messages: Array.isArray(rows), treehole_presence: Array.isArray(presenceRows) };
+    result.supabase = { ok: true, treehole_messages: Array.isArray(rows) };
   } catch (error) {
     result.ok = false;
     result.supabase = { ok: false, error: error.message };
@@ -426,31 +413,6 @@ async function handleDebug(env) {
 async function loadMessages(env) {
   const rows = await supabase(env, `/rest/v1/treehole_messages?select=*&order=created_at.desc&limit=${MAX_MESSAGES}`);
   return rows.map(appMessageFromRow).reverse();
-}
-
-async function updatePresence(env, session) {
-  const now = new Date().toISOString();
-  await supabase(env, "/rest/v1/treehole_presence", {
-    method: "POST",
-    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify({
-      client_id: session.clientId,
-      author: session.name || "访客",
-      last_seen: now
-    })
-  });
-
-  const oldCutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-  await supabase(env, `/rest/v1/treehole_presence?last_seen=lt.${encodeURIComponent(oldCutoff)}`, {
-    method: "DELETE",
-    headers: { Prefer: "return=minimal" }
-  });
-}
-
-async function countOnline(env) {
-  const cutoff = new Date(Date.now() - PRESENCE_SECONDS * 1000).toISOString();
-  const rows = await supabase(env, `/rest/v1/treehole_presence?select=client_id&last_seen=gte.${encodeURIComponent(cutoff)}&limit=20`);
-  return Array.isArray(rows) ? rows.length : 0;
 }
 
 async function loadGoals(env) {

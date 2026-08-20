@@ -102,7 +102,6 @@
   let lastMessageRefreshAt = 0;
   let pollingTimer = null;
   let callPollingTimer = null;
-  let presenceTimer = null;
   let lastCallSignalTime = "";
   let pendingOffer = null;
   let peerConnection = null;
@@ -181,7 +180,6 @@
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && !chatPanel.classList.contains("hidden")) {
       scheduleMessageRefresh(300);
-      heartbeatPresence().catch(() => {});
     }
   });
 
@@ -548,7 +546,6 @@
 
     window.clearInterval(pollingTimer);
     window.clearInterval(callPollingTimer);
-    window.clearInterval(presenceTimer);
 
     pollingTimer = window.setInterval(() => {
       refreshMessages().catch(() => {});
@@ -560,17 +557,6 @@
     callPollingTimer = window.setInterval(() => {
       pollCallSignals().catch(() => {});
     }, 1500);
-
-    heartbeatPresence().catch(() => {});
-    presenceTimer = window.setInterval(() => {
-      heartbeatPresence().catch(() => {});
-    }, 12000);
-  }
-
-  async function heartbeatPresence() {
-    if (chatPanel.classList.contains("hidden") || document.hidden) return;
-    const data = await postJson("/api/presence", {});
-    setOnline(data.online || 0);
   }
 
   async function pollCallSignals() {
@@ -696,7 +682,6 @@
     try {
       const data = await getJson(`/api/messages?t=${Date.now()}`);
       renderMessages(data.messages || []);
-      if (Number.isFinite(Number(data.online))) setOnline(Number(data.online));
       if (data.stale) scheduleMessageRefresh(2500);
     } catch (error) {
       setStatus(error.message || "History loading failed, retrying...");

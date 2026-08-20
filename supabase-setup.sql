@@ -75,17 +75,6 @@ create index if not exists treehole_call_signals_created_at_idx
 
 alter table public.treehole_call_signals enable row level security;
 
-create table if not exists public.treehole_presence (
-  client_id text primary key,
-  author text not null default '',
-  last_seen timestamptz not null default now()
-);
-
-create index if not exists treehole_presence_last_seen_idx
-  on public.treehole_presence (last_seen desc);
-
-alter table public.treehole_presence enable row level security;
-
 insert into storage.buckets (
   id,
   name,
