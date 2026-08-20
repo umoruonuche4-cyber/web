@@ -112,6 +112,7 @@ treehole_diary
 treehole_sesame
 treehole_goals
 treehole_call_signals
+treehole_presence
 ```
 
 也会创建/更新存视频图片的 bucket：
