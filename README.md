@@ -61,7 +61,9 @@ SUPABASE_BUCKET=treehole-media
 
 不用设置 `DATA_DIR`，也不用添加 Disk。
 
-如果要尽量支持 1GB 以上视频，保持 `MAX_UPLOAD_MB=2048`，并重新运行 `supabase-setup.sql`。代码会使用 Supabase 直传，避免视频先经过 Render；但 Supabase 免费项目的单文件大小仍可能被平台限制。要稳定上传超过 1GB，通常需要 Supabase 付费项目或更换支持大文件的对象存储。
+如果要尽量支持 1GB 以上视频，保持 `MAX_UPLOAD_MB=2048`，并重新运行 `supabase-setup.sql`。代码会使用 Supabase 直传，避免视频先经过 Render。
+
+如果看到 `EntityTooLarge`、`Payload too large` 或 `The object exceeded the maximum allowed size`，说明 Supabase 自己拦截了文件，不是网站代码问题。Supabase 免费项目通常只能上传很小的单文件；要稳定上传超过 1GB，需要在 Supabase Dashboard 的 Storage Settings 调高 Global file size limit，同时 bucket 的 `file_size_limit` 也要足够大，或者换成支持大文件的对象存储。
 
 这次新增了日记编辑和每日目标，也需要在 Supabase SQL Editor 里重新运行一次 `supabase-setup.sql`。
 

@@ -1,6 +1,7 @@
 (function () {
   let maxFileBytes = 500 * 1024 * 1024;
   let directUpload = false;
+  let cloudflareMode = false;
 
   const clientIdKey = "remoteChatClientId";
   const nameKey = "remoteChatName";
@@ -25,9 +26,11 @@
 
   const showChat = document.getElementById("showChat");
   const showDiary = document.getElementById("showDiary");
+  const showSesame = document.getElementById("showSesame");
   const showGoals = document.getElementById("showGoals");
   const chatView = document.getElementById("chatView");
   const diaryView = document.getElementById("diaryView");
+  const sesameView = document.getElementById("sesameView");
   const goalsView = document.getElementById("goalsView");
 
   const messagesEl = document.getElementById("messages");
@@ -50,6 +53,16 @@
   const emptyDiaryTemplate = document.getElementById("emptyDiaryTemplate");
   const cancelDiaryEdit = document.getElementById("cancelDiaryEdit");
   const saveDiaryButton = document.getElementById("saveDiaryButton");
+  const sesameForm = document.getElementById("sesameForm");
+  const sesameTitle = document.getElementById("sesameTitle");
+  const sesameText = document.getElementById("sesameText");
+  const sesameFileInput = document.getElementById("sesameFileInput");
+  const sesamePreview = document.getElementById("sesamePreview");
+  const sesameStatus = document.getElementById("sesameStatus");
+  const sesameList = document.getElementById("sesameList");
+  const emptySesameTemplate = document.getElementById("emptySesameTemplate");
+  const cancelSesameEdit = document.getElementById("cancelSesameEdit");
+  const saveSesameButton = document.getElementById("saveSesameButton");
   const goalForm = document.getElementById("goalForm");
   const goalTime = document.getElementById("goalTime");
   const goalText = document.getElementById("goalText");
@@ -76,13 +89,20 @@
   let hasMessages = false;
   let hasDiary = false;
   let diaryEntries = [];
+  let hasSesame = false;
+  let sesameEntries = [];
   let editingDiaryId = null;
   let editingDiaryMedia = [];
+  let editingSesameId = null;
+  let editingSesameMedia = [];
   let dailyGoals = [];
   let editingGoalId = null;
   let messageRefreshTimer = null;
   let messageRefreshInFlight = false;
   let lastMessageRefreshAt = 0;
+  let pollingTimer = null;
+  let callPollingTimer = null;
+  let lastCallSignalTime = "";
   let pendingOffer = null;
   let peerConnection = null;
   let localStream = null;
@@ -118,6 +138,7 @@
 
       maxFileBytes = Number(data.maxUploadMb || 500) * 1024 * 1024;
       directUpload = Boolean(data.directUpload);
+      cloudflareMode = Boolean(data.cloudflare);
       localStorage.setItem(nameKey, author);
       if (rememberPassword.checked) {
         localStorage.setItem(passwordKey, password);
@@ -130,9 +151,14 @@
       renderMessages(data.messages || []);
       if (data.messagesStale) scheduleMessageRefresh(800);
       setOnline(data.online || 0);
-      connectEvents();
+      if (cloudflareMode) {
+        startPollingMode();
+      } else {
+        connectEvents();
+      }
       scheduleMessageRefresh(1200);
       await loadDiary();
+      await loadSesame();
       await loadGoals();
       messageInput.focus();
     } catch (error) {
@@ -148,6 +174,7 @@
 
   showChat.addEventListener("click", () => switchView("chat"));
   showDiary.addEventListener("click", () => switchView("diary"));
+  showSesame.addEventListener("click", () => switchView("sesame"));
   showGoals.addEventListener("click", () => switchView("goals"));
   window.addEventListener("online", () => scheduleMessageRefresh(300));
   document.addEventListener("visibilitychange", () => {
@@ -242,8 +269,61 @@
     }
   });
 
+  async function handleSesameSubmit(event) {
+    event.preventDefault();
+
+    const title = sesameTitle.value.trim();
+    const text = sesameText.value.trim();
+    const files = Array.from(sesameFileInput.files || []).slice(0, 8);
+    if (!title && !text && files.length === 0 && !editingSesameMedia.length) return;
+
+    const oversized = files.find((file) => file.size > maxFileBytes);
+    if (oversized) {
+      setSesameStatus(`文件不能超过 ${Math.round(maxFileBytes / 1024 / 1024)} MB：${oversized.name}`);
+      return;
+    }
+
+    saveSesameButton.disabled = true;
+    saveSesameButton.textContent = files.length ? "上传中" : "保存中";
+
+    try {
+      const media = [];
+      for (let index = 0; index < files.length; index += 1) {
+        setSesameStatus(`正在上传 ${index + 1}/${files.length}：${files[index].name}`);
+        media.push(await prepareMedia(files[index], (percent) => {
+          setSesameStatus(`正在上传 ${index + 1}/${files.length}：${percent}% ${files[index].name}`);
+        }));
+      }
+
+      if (editingSesameId) {
+        await putJson(`/api/sesame/${editingSesameId}`, {
+          title,
+          text,
+          existingMedia: editingSesameMedia,
+          media
+        });
+        setSesameStatus("芝麻已更新");
+        await loadSesame();
+        cancelSesameEditing();
+      } else {
+        await postJson("/api/sesame", { title, text, media });
+        sesameTitle.value = "";
+        sesameText.value = "";
+        clearSesameFiles();
+        setSesameStatus("芝麻已保存");
+      }
+    } catch (error) {
+      setSesameStatus(error.message || "保存失败");
+    } finally {
+      saveSesameButton.disabled = false;
+      saveSesameButton.textContent = editingSesameId ? "更新芝麻" : "保存芝麻";
+      sesameText.focus();
+    }
+  }
+
   messageInput.addEventListener("input", () => autoresize(messageInput));
   diaryText.addEventListener("input", () => autoresize(diaryText));
+  sesameText.addEventListener("input", () => autoresize(sesameText));
   messageInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -264,7 +344,10 @@
   });
 
   diaryFileInput.addEventListener("change", renderDiaryPreview);
+  sesameFileInput.addEventListener("change", renderSesamePreview);
   cancelDiaryEdit.addEventListener("click", cancelDiaryEditing);
+  cancelSesameEdit.addEventListener("click", cancelSesameEditing);
+  sesameForm.addEventListener("submit", handleSesameSubmit);
   goalForm.addEventListener("submit", handleGoalSubmit);
   removeFile.addEventListener("click", clearFile);
   startCall.addEventListener("click", startOutgoingCall);
@@ -368,7 +451,7 @@
       });
       if (!response.ok) {
         const text = await response.text().catch(() => "");
-        throw new Error(`上传失败：${response.status} ${text}`);
+        throw new Error(uploadErrorMessage(response.status, text));
       }
       return;
     }
@@ -389,7 +472,7 @@
         if (xhr.status >= 200 && xhr.status < 300) {
           resolve();
         } else {
-          reject(new Error(`上传失败：${xhr.status} ${xhr.responseText || ""}`));
+          reject(new Error(uploadErrorMessage(xhr.status, xhr.responseText || "")));
         }
       });
       xhr.addEventListener("error", () => reject(new Error("上传失败，请检查网络后重试")));
@@ -397,6 +480,19 @@
       xhr.timeout = 0;
       xhr.send(form);
     });
+  }
+
+  function uploadErrorMessage(status, rawText) {
+    const text = String(rawText || "");
+    if (status === 413 || text.includes("EntityTooLarge") || text.includes("Payload too large")) {
+      return "上传失败：视频超过 Supabase 当前允许的单文件大小。免费版通常最多 50MB；要传 1GB 以上，需要在 Supabase Storage Settings 调高 Global file size limit，并确保 bucket 的 file_size_limit 也足够大。";
+    }
+
+    if (status === 400 && text.includes("maximum allowed size")) {
+      return "上传失败：Supabase 的 bucket 或全局文件大小限制太小，请重新运行 supabase-setup.sql，并检查 Storage Settings 的全局上传上限。";
+    }
+
+    return `上传失败：${status} ${text}`;
   }
 
   function connectEvents() {
@@ -419,6 +515,12 @@
     events.addEventListener("diary-update", () => {
       loadDiary();
     });
+    events.addEventListener("sesame", (event) => {
+      addSesameEntry(JSON.parse(event.data));
+    });
+    events.addEventListener("sesame-update", () => {
+      loadSesame();
+    });
     events.addEventListener("goals", (event) => {
       const data = JSON.parse(event.data);
       renderGoals(data.goals || []);
@@ -435,16 +537,53 @@
     });
   }
 
+  function startPollingMode() {
+    setStatus("已连接");
+    if (events) {
+      events.close();
+      events = null;
+    }
+
+    window.clearInterval(pollingTimer);
+    window.clearInterval(callPollingTimer);
+
+    pollingTimer = window.setInterval(() => {
+      refreshMessages().catch(() => {});
+      loadDiary().catch(() => {});
+      loadSesame().catch(() => {});
+      loadGoals().catch(() => {});
+    }, 3500);
+
+    callPollingTimer = window.setInterval(() => {
+      pollCallSignals().catch(() => {});
+    }, 1500);
+  }
+
+  async function pollCallSignals() {
+    if (!cloudflareMode || chatPanel.classList.contains("hidden")) return;
+    const query = lastCallSignalTime ? `?after=${encodeURIComponent(lastCallSignalTime)}` : "";
+    const data = await getJson(`/api/call-signals${query}`);
+    const signals = Array.isArray(data.signals) ? data.signals : [];
+    signals.forEach((signal) => {
+      lastCallSignalTime = signal.time || lastCallSignalTime;
+      handleCallSignal(signal);
+    });
+  }
+
   function switchView(view) {
     const diaryActive = view === "diary";
+    const sesameActive = view === "sesame";
     const goalsActive = view === "goals";
     showDiary.classList.toggle("active", diaryActive);
+    showSesame.classList.toggle("active", sesameActive);
     showGoals.classList.toggle("active", goalsActive);
-    showChat.classList.toggle("active", !diaryActive && !goalsActive);
+    showChat.classList.toggle("active", !diaryActive && !sesameActive && !goalsActive);
     diaryView.classList.toggle("hidden", !diaryActive);
+    sesameView.classList.toggle("hidden", !sesameActive);
     goalsView.classList.toggle("hidden", !goalsActive);
-    chatView.classList.toggle("hidden", diaryActive || goalsActive);
+    chatView.classList.toggle("hidden", diaryActive || sesameActive || goalsActive);
     if (diaryActive) diaryText.focus();
+    if (sesameActive) sesameText.focus();
     if (goalsActive) goalText.focus();
   }
 
@@ -477,6 +616,8 @@
       messagesEl.textContent = "";
       hasMessages = true;
     }
+
+    ensureMessageDateSeparator(message.time);
 
     const mine = message.clientId === clientId;
     const wrapper = document.createElement("article");
@@ -513,6 +654,17 @@
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
+  function ensureMessageDateSeparator(value) {
+    const key = messageDateKey(value);
+    if (!key || messagesEl.querySelector(`[data-date="${key}"]`)) return;
+
+    const separator = document.createElement("div");
+    separator.className = "date-separator";
+    separator.dataset.date = key;
+    separator.textContent = formatDateLabel(value);
+    messagesEl.appendChild(separator);
+  }
+
   function scheduleMessageRefresh(delay = 1000) {
     window.clearTimeout(messageRefreshTimer);
     messageRefreshTimer = window.setTimeout(() => {
@@ -545,6 +697,15 @@
       renderDiaryEntries(data.entries || []);
     } catch (error) {
       setDiaryStatus(error.message || "日记加载失败");
+    }
+  }
+
+  async function loadSesame() {
+    try {
+      const data = await getJson("/api/sesame");
+      renderSesameEntries(data.entries || []);
+    } catch (error) {
+      setSesameStatus(error.message || "芝麻加载失败");
     }
   }
 
@@ -700,7 +861,7 @@
 
     const meta = document.createElement("time");
     meta.dateTime = entry.time;
-    meta.textContent = `${entry.author || "我"} · ${formatDateTime(entry.time)}`;
+    meta.textContent = `${entry.author || "我"} · ${formatFullDateTime(entry.time)}`;
 
     const editButton = document.createElement("button");
     editButton.className = "entry-action";
@@ -708,7 +869,17 @@
     editButton.textContent = "编辑";
     editButton.addEventListener("click", () => startDiaryEditing(entry));
 
-    header.append(title, meta, editButton);
+    const copyButton = document.createElement("button");
+    copyButton.className = "entry-action secondary-action";
+    copyButton.type = "button";
+    copyButton.textContent = "转到芝麻";
+    copyButton.addEventListener("click", () => copyDiaryToSesame(entry));
+
+    const actions = document.createElement("div");
+    actions.className = "entry-actions";
+    actions.append(editButton, copyButton);
+
+    header.append(title, meta, actions);
     article.appendChild(header);
 
     if (entry.text) {
@@ -752,6 +923,104 @@
     saveDiaryButton.textContent = "保存日记";
   }
 
+  async function copyDiaryToSesame(entry) {
+    try {
+      setDiaryStatus("正在转到芝麻...");
+      await postJson("/api/sesame", {
+        title: entry.title || "来自日记",
+        text: entry.text || "",
+        media: Array.isArray(entry.media) ? entry.media : []
+      });
+      await loadSesame();
+      setDiaryStatus("已转到芝麻");
+    } catch (error) {
+      setDiaryStatus(error.message || "转到芝麻失败");
+    }
+  }
+
+  function renderSesameEntries(entries) {
+    sesameEntries = entries.slice();
+    sesameList.textContent = "";
+    hasSesame = false;
+    if (!sesameEntries.length) {
+      sesameList.appendChild(emptySesameTemplate.content.cloneNode(true));
+      return;
+    }
+    sesameEntries.forEach(addSesameEntry);
+  }
+
+  function addSesameEntry(entry) {
+    if (!hasSesame) {
+      sesameList.textContent = "";
+      hasSesame = true;
+    }
+
+    if (sesameList.querySelector(`[data-id="${entry.id}"]`)) return;
+
+    const article = document.createElement("article");
+    article.className = "diary-entry";
+    article.dataset.id = entry.id;
+
+    const header = document.createElement("div");
+    header.className = "diary-entry-header";
+
+    const title = document.createElement("h2");
+    title.textContent = entry.title || "没有标题的芝麻";
+
+    const meta = document.createElement("time");
+    meta.dateTime = entry.time;
+    meta.textContent = `${entry.author || "我"} · ${formatFullDateTime(entry.time)}`;
+
+    const editButton = document.createElement("button");
+    editButton.className = "entry-action";
+    editButton.type = "button";
+    editButton.textContent = "编辑";
+    editButton.addEventListener("click", () => startSesameEditing(entry));
+
+    header.append(title, meta, editButton);
+    article.appendChild(header);
+
+    if (entry.text) {
+      const text = document.createElement("p");
+      text.className = "diary-entry-text";
+      text.textContent = entry.text;
+      article.appendChild(text);
+    }
+
+    const mediaItems = Array.isArray(entry.media) ? entry.media : [];
+    if (mediaItems.length) {
+      const grid = document.createElement("div");
+      grid.className = "diary-media-grid";
+      mediaItems.forEach((item) => grid.appendChild(renderMedia(item)));
+      article.appendChild(grid);
+    }
+
+    sesameList.prepend(article);
+  }
+
+  function startSesameEditing(entry) {
+    editingSesameId = entry.id;
+    editingSesameMedia = Array.isArray(entry.media) ? entry.media.slice() : [];
+    sesameTitle.value = entry.title || "";
+    sesameText.value = entry.text || "";
+    clearSesameFiles();
+    cancelSesameEdit.classList.remove("hidden");
+    saveSesameButton.textContent = "更新芝麻";
+    setSesameStatus(`正在编辑：${entry.title || "没有标题的芝麻"}`);
+    sesameTitle.focus();
+    sesameForm.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function cancelSesameEditing() {
+    editingSesameId = null;
+    editingSesameMedia = [];
+    sesameTitle.value = "";
+    sesameText.value = "";
+    clearSesameFiles();
+    cancelSesameEdit.classList.add("hidden");
+    saveSesameButton.textContent = "保存芝麻";
+  }
+
   function renderDiaryPreview() {
     const files = Array.from(diaryFileInput.files || []);
     diaryPreview.textContent = "";
@@ -775,6 +1044,31 @@
     }
 
     diaryPreview.classList.remove("hidden");
+  }
+
+  function renderSesamePreview() {
+    const files = Array.from(sesameFileInput.files || []);
+    sesamePreview.textContent = "";
+    if (!files.length) {
+      sesamePreview.classList.add("hidden");
+      return;
+    }
+
+    files.slice(0, 8).forEach((file) => {
+      const item = document.createElement("div");
+      item.className = "diary-preview-item";
+      item.textContent = `${file.name} · ${formatBytes(file.size)}`;
+      sesamePreview.appendChild(item);
+    });
+
+    if (files.length > 8) {
+      const item = document.createElement("div");
+      item.className = "diary-preview-item";
+      item.textContent = "一次最多保存 8 个附件";
+      sesamePreview.appendChild(item);
+    }
+
+    sesamePreview.classList.remove("hidden");
   }
 
   function renderMedia(media) {
@@ -1001,6 +1295,12 @@
     diaryPreview.classList.add("hidden");
   }
 
+  function clearSesameFiles() {
+    sesameFileInput.value = "";
+    sesamePreview.textContent = "";
+    sesamePreview.classList.add("hidden");
+  }
+
   function readFileAsDataUrl(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -1037,6 +1337,37 @@
       hour: "2-digit",
       minute: "2-digit"
     });
+  }
+
+  function formatFullDateTime(value) {
+    const date = new Date(value);
+    return date.toLocaleString("zh-CN", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  }
+
+  function messageDateKey(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  function formatDateLabel(value) {
+    const key = messageDateKey(value);
+    const today = todayKey();
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayKey = messageDateKey(yesterday.toISOString());
+    if (key === today) return `今天 ${key}`;
+    if (key === yesterdayKey) return `昨天 ${key}`;
+    return key;
   }
 
   function todayKey() {

@@ -22,6 +22,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, "data");
 const UPLOAD_DIR = path.join(DATA_DIR, "uploads");
 const MESSAGE_FILE = path.join(DATA_DIR, "messages.json");
 const DIARY_FILE = path.join(DATA_DIR, "diary.json");
+const SESAME_FILE = path.join(DATA_DIR, "sesame.json");
 const GOALS_FILE = path.join(DATA_DIR, "goals.json");
 const SUPABASE_URL = String(process.env.SUPABASE_URL || "").replace(/\/+$/, "");
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || "";
@@ -32,9 +33,11 @@ const clients = new Map();
 const sessions = new Map();
 let messages = [];
 let diaryEntries = [];
+let sesameEntries = [];
 let dailyGoals = [];
 let saveQueue = Promise.resolve();
 let saveDiaryQueue = Promise.resolve();
+let saveSesameQueue = Promise.resolve();
 let saveGoalsQueue = Promise.resolve();
 let lastMessagesLoadAt = 0;
 
@@ -94,6 +97,17 @@ async function ensureDataFiles() {
   }
 
   try {
+    const raw = await fsp.readFile(SESAME_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    sesameEntries = Array.isArray(parsed) ? parsed.slice(-MAX_DIARY_ENTRIES) : [];
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      console.warn("Could not load sesame:", error.message);
+    }
+    sesameEntries = [];
+  }
+
+  try {
     const raw = await fsp.readFile(GOALS_FILE, "utf8");
     const parsed = JSON.parse(raw);
     dailyGoals = Array.isArray(parsed) ? parsed : [];
@@ -109,6 +123,7 @@ async function safeLoadSupabaseData() {
   const results = await Promise.allSettled([
     loadMessagesFromSupabase(),
     loadDiaryFromSupabase(),
+    loadSesameFromSupabase(),
     loadGoalsFromSupabase()
   ]);
 
@@ -123,7 +138,12 @@ async function safeLoadSupabaseData() {
   }
 
   if (results[2].status === "rejected") {
-    console.warn("Supabase goals unavailable at startup:", results[2].reason.message);
+    console.warn("Supabase sesame unavailable at startup:", results[2].reason.message);
+    sesameEntries = [];
+  }
+
+  if (results[3].status === "rejected") {
+    console.warn("Supabase goals unavailable at startup:", results[3].reason.message);
     dailyGoals = [];
   }
 }
@@ -279,6 +299,14 @@ function queueDiarySave() {
   return saveDiaryQueue;
 }
 
+function queueSesameSave() {
+  const payload = JSON.stringify(sesameEntries.slice(-MAX_DIARY_ENTRIES), null, 2);
+  saveSesameQueue = saveSesameQueue
+    .then(() => fsp.writeFile(SESAME_FILE, payload, "utf8"))
+    .catch((error) => console.warn("Could not save sesame:", error.message));
+  return saveSesameQueue;
+}
+
 function queueGoalsSave() {
   const payload = JSON.stringify(dailyGoals, null, 2);
   saveGoalsQueue = saveGoalsQueue
@@ -371,6 +399,17 @@ async function loadDiaryFromSupabase() {
   diaryEntries = rows.map(appDiaryFromRow).reverse();
 }
 
+async function loadSesameFromSupabase() {
+  const url = `${SUPABASE_URL}/rest/v1/treehole_sesame?select=*&order=created_at.desc&limit=${MAX_DIARY_ENTRIES}`;
+  const response = await fetch(url, { headers: supabaseHeaders() });
+  if (!response.ok) {
+    throw new Error(`Could not load Supabase sesame: ${response.status} ${await response.text()}`);
+  }
+
+  const rows = await response.json();
+  sesameEntries = rows.map(appDiaryFromRow).reverse();
+}
+
 async function loadGoalsFromSupabase() {
   const url = `${SUPABASE_URL}/rest/v1/treehole_goals?select=*&order=goal_time.asc,text.asc`;
   const response = await fetch(url, { headers: supabaseHeaders() });
@@ -432,6 +471,32 @@ async function saveDiaryToSupabase(entry) {
   }
 }
 
+async function saveSesameToSupabase(entry) {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/treehole_sesame`, {
+    method: "POST",
+    headers: supabaseHeaders({
+      "Content-Type": "application/json",
+      Prefer: "return=minimal"
+    }),
+    body: JSON.stringify({
+      id: entry.id,
+      created_at: entry.time,
+      client_id: entry.clientId,
+      author: entry.author,
+      title: entry.title,
+      text: entry.text,
+      media: entry.media,
+      edited_at: entry.editedAt || null
+    })
+  });
+
+  if (!response.ok) {
+    const error = new Error(`Could not save sesame: ${response.status} ${await response.text()}`);
+    error.statusCode = 502;
+    throw error;
+  }
+}
+
 async function upsertDiaryToSupabase(entry) {
   const response = await fetch(`${SUPABASE_URL}/rest/v1/treehole_diary?id=eq.${encodeURIComponent(entry.id)}`, {
     method: "PATCH",
@@ -448,6 +513,28 @@ async function upsertDiaryToSupabase(entry) {
 
   if (!response.ok) {
     const error = new Error(`Could not update diary: ${response.status} ${await response.text()}`);
+    error.statusCode = 502;
+    throw error;
+  }
+}
+
+async function upsertSesameToSupabase(entry) {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/treehole_sesame?id=eq.${encodeURIComponent(entry.id)}`, {
+    method: "PATCH",
+    headers: supabaseHeaders({
+      "Content-Type": "application/json",
+      Prefer: "return=minimal"
+    }),
+    body: JSON.stringify({
+      title: entry.title,
+      text: entry.text,
+      media: entry.media,
+      edited_at: entry.editedAt || null
+    })
+  });
+
+  if (!response.ok) {
+    const error = new Error(`Could not update sesame: ${response.status} ${await response.text()}`);
     error.statusCode = 502;
     throw error;
   }
@@ -500,6 +587,18 @@ async function persistDiary(entry) {
   await queueDiarySave();
 }
 
+async function persistSesame(entry) {
+  sesameEntries.push(entry);
+  sesameEntries = sesameEntries.slice(-MAX_DIARY_ENTRIES);
+
+  if (USE_SUPABASE) {
+    await saveSesameToSupabase(entry);
+    return;
+  }
+
+  await queueSesameSave();
+}
+
 async function persistDiaryUpdate(entry) {
   if (USE_SUPABASE) {
     await upsertDiaryToSupabase(entry);
@@ -507,6 +606,15 @@ async function persistDiaryUpdate(entry) {
   }
 
   await queueDiarySave();
+}
+
+async function persistSesameUpdate(entry) {
+  if (USE_SUPABASE) {
+    await upsertSesameToSupabase(entry);
+    return;
+  }
+
+  await queueSesameSave();
 }
 
 async function persistGoals() {
@@ -893,6 +1001,74 @@ async function handleUpdateDiary(req, res, id) {
   json(res, 200, { ok: true, entry });
 }
 
+async function handleGetSesame(req, res) {
+  const session = requireSession(req, res);
+  if (!session) return;
+
+  json(res, 200, {
+    ok: true,
+    entries: sesameEntries
+  });
+}
+
+async function handleCreateSesame(req, res) {
+  const session = requireSession(req, res);
+  if (!session) return;
+
+  const body = await readBody(req);
+  const title = cleanTitle(body.title);
+  const text = cleanDiaryText(body.text);
+  if (!title && !text && (!Array.isArray(body.media) || body.media.length === 0)) {
+    json(res, 400, { error: "Sesame entry cannot be empty" });
+    return;
+  }
+
+  const id = crypto.randomUUID();
+  const media = await normalizeMediaList(body.media, id);
+  const entry = {
+    id,
+    time: new Date().toISOString(),
+    clientId: session.clientId,
+    author: session.name,
+    title,
+    text,
+    media
+  };
+
+  await persistSesame(entry);
+  broadcast("sesame", entry);
+  json(res, 201, { ok: true, entry });
+}
+
+async function handleUpdateSesame(req, res, id) {
+  const session = requireSession(req, res);
+  if (!session) return;
+
+  const entry = sesameEntries.find((item) => item.id === id);
+  if (!entry) {
+    json(res, 404, { error: "Sesame entry not found" });
+    return;
+  }
+
+  const body = await readBody(req);
+  const title = cleanTitle(body.title);
+  const text = cleanDiaryText(body.text);
+  const existingMedia = Array.isArray(body.existingMedia) ? body.existingMedia.map(mediaFromUploadedReference).filter(Boolean) : [];
+  const newMedia = await normalizeMediaList(body.media, id);
+  if (!title && !text && existingMedia.length === 0 && newMedia.length === 0) {
+    json(res, 400, { error: "Sesame entry cannot be empty" });
+    return;
+  }
+
+  entry.title = title;
+  entry.text = text;
+  entry.media = existingMedia.concat(newMedia).slice(0, 8);
+  entry.editedAt = new Date().toISOString();
+  await persistSesameUpdate(entry);
+  broadcast("sesame-update", entry);
+  json(res, 200, { ok: true, entry });
+}
+
 async function handleGetGoals(req, res) {
   const session = requireSession(req, res);
   if (!session) return;
@@ -1151,6 +1327,22 @@ async function router(req, res) {
     const diaryMatch = url.pathname.match(/^\/api\/diary\/([0-9a-f-]+)$/i);
     if (req.method === "PUT" && diaryMatch) {
       await handleUpdateDiary(req, res, diaryMatch[1]);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/sesame") {
+      await handleGetSesame(req, res);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/sesame") {
+      await handleCreateSesame(req, res);
+      return;
+    }
+
+    const sesameMatch = url.pathname.match(/^\/api\/sesame\/([0-9a-f-]+)$/i);
+    if (req.method === "PUT" && sesameMatch) {
+      await handleUpdateSesame(req, res, sesameMatch[1]);
       return;
     }
 

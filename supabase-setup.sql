@@ -31,6 +31,22 @@ create index if not exists treehole_diary_created_at_idx
 
 alter table public.treehole_diary enable row level security;
 
+create table if not exists public.treehole_sesame (
+  id uuid primary key,
+  created_at timestamptz not null default now(),
+  client_id text not null,
+  author text not null,
+  title text not null default '',
+  text text not null default '',
+  media jsonb not null default '[]'::jsonb,
+  edited_at timestamptz
+);
+
+create index if not exists treehole_sesame_created_at_idx
+  on public.treehole_sesame (created_at desc);
+
+alter table public.treehole_sesame enable row level security;
+
 create table if not exists public.treehole_goals (
   id uuid primary key,
   created_at timestamptz not null default now(),
@@ -44,6 +60,20 @@ create index if not exists treehole_goals_time_idx
   on public.treehole_goals (goal_time asc);
 
 alter table public.treehole_goals enable row level security;
+
+create table if not exists public.treehole_call_signals (
+  id uuid primary key,
+  created_at timestamptz not null default now(),
+  sender_id text not null,
+  sender_name text not null,
+  signal_type text not null,
+  payload jsonb
+);
+
+create index if not exists treehole_call_signals_created_at_idx
+  on public.treehole_call_signals (created_at desc);
+
+alter table public.treehole_call_signals enable row level security;
 
 insert into storage.buckets (
   id,

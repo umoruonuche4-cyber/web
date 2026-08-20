@@ -1,4 +1,4 @@
-const CACHE_NAME = "secret-tree-hole-v3";
+const CACHE_NAME = "secret-tree-hole-v5";
 const STATIC_ASSETS = [
   "/",
   "/styles.css",

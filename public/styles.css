@@ -301,7 +301,7 @@ button {
 
 .view-tabs {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   padding: 10px 14px;
   border-bottom: 1px solid var(--line);
@@ -342,6 +342,17 @@ button {
   background:
     linear-gradient(rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.72)),
     repeating-linear-gradient(135deg, transparent 0 16px, rgba(210, 159, 67, 0.06) 16px 32px);
+}
+
+.sesame-view {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 0;
+  min-height: 0;
+  overflow: hidden;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.74), rgba(255, 255, 255, 0.74)),
+    repeating-linear-gradient(135deg, transparent 0 16px, rgba(146, 92, 56, 0.055) 16px 32px);
 }
 
 .messages {
@@ -407,6 +418,18 @@ button {
   max-width: min(72%, 560px);
   display: grid;
   gap: 5px;
+}
+
+.date-separator {
+  align-self: center;
+  margin: 4px 0;
+  border: 1px solid rgba(18, 108, 95, 0.14);
+  border-radius: 999px;
+  padding: 5px 12px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.82);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .message.mine {
@@ -733,9 +756,24 @@ button {
 }
 
 .entry-action {
+  align-self: center;
+}
+
+.entry-actions {
   grid-column: 2;
   grid-row: 1 / span 2;
-  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.entry-actions .entry-action {
+  grid-column: auto;
+  grid-row: auto;
+}
+
+.secondary-action {
+  color: #6c5540;
 }
 
 .entry-action:hover,
@@ -968,6 +1006,18 @@ button {
     padding: 16px 12px 22px;
   }
 
+  .view-tabs {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    padding: 8px;
+  }
+
+  .view-tabs button {
+    height: 36px;
+    padding: 0 4px;
+    font-size: 13px;
+  }
+
   .diary-toolbar {
     align-items: stretch;
     flex-direction: column;
@@ -986,7 +1036,43 @@ button {
   }
 
   .diary-list {
+    gap: 12px;
+    padding: 10px;
+  }
+
+  .diary-entry {
+    gap: 8px;
     padding: 12px;
+  }
+
+  .diary-entry-header {
+    grid-template-columns: 1fr;
+  }
+
+  .diary-entry h2 {
+    font-size: 16px;
+  }
+
+  .diary-entry time {
+    font-size: 12px;
+  }
+
+  .entry-actions {
+    grid-column: 1;
+    grid-row: auto;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .entry-actions .entry-action,
+  .diary-entry-header > .entry-action {
+    width: 100%;
+  }
+
+  .diary-entry-text {
+    font-size: 14px;
+    line-height: 1.7;
   }
 
   .diary-media-grid {

@@ -58,6 +58,7 @@
         <nav class="view-tabs" aria-label="功能切换">
           <button class="active" type="button" id="showChat">聊天</button>
           <button type="button" id="showDiary">日记</button>
+          <button type="button" id="showSesame">芝麻</button>
           <button type="button" id="showGoals">目标</button>
         </nav>
 
@@ -114,6 +115,25 @@
           <div class="diary-list" id="diaryList" aria-live="polite"></div>
         </section>
 
+        <section class="view-panel sesame-view hidden" id="sesameView" aria-label="芝麻">
+          <form class="diary-form" id="sesameForm">
+            <input id="sesameTitle" maxlength="80" placeholder="芝麻标题">
+            <textarea id="sesameText" rows="5" maxlength="12000" placeholder="写下想单独保存的话"></textarea>
+            <div class="diary-toolbar">
+              <label class="diary-file-button">
+                <input id="sesameFileInput" type="file" accept="image/*,video/*" multiple>
+                <span>添加图片/视频</span>
+              </label>
+              <button class="ghost-button hidden" type="button" id="cancelSesameEdit">取消编辑</button>
+              <button class="send-button" type="submit" id="saveSesameButton">保存芝麻</button>
+            </div>
+            <div class="diary-preview hidden" id="sesamePreview"></div>
+            <p class="diary-status" id="sesameStatus"></p>
+          </form>
+
+          <div class="diary-list" id="sesameList" aria-live="polite"></div>
+        </section>
+
         <section class="view-panel goals-view hidden" id="goalsView" aria-label="每日目标">
           <form class="goal-form" id="goalForm">
             <input id="goalTime" type="time" aria-label="目标时间">
@@ -158,6 +178,17 @@
           <span></span>
         </div>
         <p>还没有日记。</p>
+      </div>
+    </template>
+
+    <template id="emptySesameTemplate">
+      <div class="empty-state diary-empty">
+        <div class="empty-visual" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+        <p>还没有芝麻记录。</p>
       </div>
     </template>
 
