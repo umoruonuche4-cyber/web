@@ -66,6 +66,7 @@
   const emptyGoalsTemplate = document.getElementById("emptyGoalsTemplate");
   const startCall = document.getElementById("startCall");
   const logoutButton = document.getElementById("logoutButton");
+  const switchAccountButton = document.getElementById("switchAccountButton");
   const incomingCall = document.getElementById("incomingCall");
   const incomingName = document.getElementById("incomingName");
   const acceptCall = document.getElementById("acceptCall");
@@ -172,6 +173,17 @@
   showSesame.addEventListener("click", () => switchView("sesame"));
   showGoals.addEventListener("click", () => switchView("goals"));
   logoutButton.addEventListener("click", () => relogin());
+  if (switchAccountButton) {
+    switchAccountButton.addEventListener("click", () => {
+      localStorage.removeItem(clientIdKey);
+      localStorage.removeItem(nameKey);
+      clientId = getClientId();
+      nameInput.value = "";
+      skipAutoLogin = true;
+      loginError.textContent = "已切换账号，请输入新的昵称后登录";
+      nameInput.focus();
+    });
+  }
   messagesEl.addEventListener("scroll", () => {
     userAwayFromBottom = !isMessageListNearBottom();
   }, { passive: true });
@@ -365,7 +377,7 @@
       body: JSON.stringify(payload)
     });
     const data = await response.json().catch(() => ({}));
-    if (response.status === 401 && url !== "/api/login") handleUnauthorized(data);
+    if (response.status === 401 && url !== "/api/login" && url !== "/api/logout") handleUnauthorized(data);
     if (!response.ok) throw new Error(data.error || `请求失败：${response.status}`);
     return data;
   }
@@ -546,7 +558,7 @@
     messageRefreshTimer = null;
   }
   async function relogin(options = {}) {
-    if (!options.skipConfirm && !window.confirm("确定要重新登录吗？\n\n选择「确定」保留当前昵称\n选择「取消」可手动修改昵称后再登录")) {
+    if (!options.skipConfirm && !window.confirm("确定要重新登录吗？返回登录页后可修改昵称。")) {
       return;
     }
     try {

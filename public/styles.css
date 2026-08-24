@@ -170,6 +170,17 @@ button {
   background: var(--accent-strong);
 }
 
+.auth-form .switch-account-button {
+  height: 42px;
+  color: #334047;
+  background: #edf3f1;
+}
+
+.auth-form .switch-account-button:hover {
+  color: #fff;
+  background: #334047;
+}
+
 .error {
   min-height: 20px;
   margin: 0;

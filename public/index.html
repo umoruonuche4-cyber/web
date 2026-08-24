@@ -36,6 +36,7 @@
             <span>记住密码，下次自动进入</span>
           </label>
           <button type="submit">进入聊天</button>
+          <button class="ghost-button switch-account-button" type="button" id="switchAccountButton">切换账号</button>
           <p class="error" id="loginError" role="alert"></p>
         </form>
       </section>
@@ -48,8 +49,8 @@
           </div>
           <div class="header-actions">
             <button class="call-button" type="button" id="startCall" title="发起视频通话">视频</button>
-            <button class="logout-button" type="button" id="logoutButton" title="返回登录页">重新登录</button>
-            <div class="presence" title="当前在线设备数">
+            <button class="logout-button" type="button" id="logoutButton" title="退出并重新登录">重新登录</button>
+            <div class="presence" title="当前在线人数">
               <span class="presence-dot" aria-hidden="true"></span>
               <span id="onlineCount">0 在线</span>
             </div>

@@ -439,36 +439,54 @@ async function loadMessages(env) {
 }
 
 async function updatePresence(env, session) {
-  const now = new Date().toISOString();
-  await supabase(env, "/rest/v1/treehole_presence", {
-    method: "POST",
-    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify({
-      client_id: session.clientId,
-      author: session.name || "访客",
-      last_seen: now
-    })
-  });
+  try {
+    const now = new Date().toISOString();
+    await supabase(env, "/rest/v1/treehole_presence", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify({
+        client_id: session.clientId,
+        author: session.name || "访客",
+        last_seen: now
+      })
+    });
 
-  const oldCutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-  await supabase(env, `/rest/v1/treehole_presence?last_seen=lt.${encodeURIComponent(oldCutoff)}`, {
-    method: "DELETE",
-    headers: { Prefer: "return=minimal" }
-  });
+    const oldCutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    await supabase(env, `/rest/v1/treehole_presence?last_seen=lt.${encodeURIComponent(oldCutoff)}`, {
+      method: "DELETE",
+      headers: { Prefer: "return=minimal" }
+    });
+  } catch (error) {
+    console.warn("updatePresence failed:", error.message);
+  }
 }
 
 async function removePresence(env, clientId) {
   if (!clientId) return;
-  await supabase(env, `/rest/v1/treehole_presence?client_id=eq.${encodeURIComponent(clientId)}`, {
-    method: "DELETE",
-    headers: { Prefer: "return=minimal" }
-  });
+  try {
+    await supabase(env, `/rest/v1/treehole_presence?client_id=eq.${encodeURIComponent(clientId)}`, {
+      method: "DELETE",
+      headers: { Prefer: "return=minimal" }
+    });
+  } catch (error) {
+    console.warn("removePresence failed:", error.message);
+  }
 }
 
 async function countOnline(env) {
-  const cutoff = new Date(Date.now() - PRESENCE_SECONDS * 1000).toISOString();
-  const rows = await supabase(env, `/rest/v1/treehole_presence?select=client_id&last_seen=gte.${encodeURIComponent(cutoff)}&limit=20`);
-  return Array.isArray(rows) ? rows.length : 0;
+  try {
+    const cutoff = new Date(Date.now() - PRESENCE_SECONDS * 1000).toISOString();
+    await supabase(env, `/rest/v1/treehole_presence?last_seen=lt.${encodeURIComponent(cutoff)}`, {
+      method: "DELETE",
+      headers: { Prefer: "return=minimal" }
+    });
+    const rows = await supabase(env, `/rest/v1/treehole_presence?select=client_id&last_seen=gte.${encodeURIComponent(cutoff)}`);
+    if (!Array.isArray(rows)) return 0;
+    return new Set(rows.map((row) => row.client_id).filter(Boolean)).size;
+  } catch (error) {
+    console.warn("countOnline failed:", error.message);
+    return 0;
+  }
 }
 
 async function loadGoals(env) {

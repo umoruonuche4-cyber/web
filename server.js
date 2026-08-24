@@ -238,6 +238,28 @@ function getSession(req) {
   return session;
 }
 
+function clearSessionCookie(req) {
+  const secure = req.headers["x-forwarded-proto"] === "https" || req.socket.encrypted;
+  return [
+    `${COOKIE_NAME}=`,
+    "HttpOnly",
+    "SameSite=Strict",
+    "Path=/",
+    "Max-Age=0",
+    secure ? "Secure" : ""
+  ]
+    .filter(Boolean)
+    .join("; ");
+}
+
+function handleLogout(req, res) {
+  const token = parseCookies(req)[COOKIE_NAME];
+  if (token) sessions.delete(token);
+  json(res, 200, { ok: true, online: publicClientCount() }, {
+    "Set-Cookie": clearSessionCookie(req)
+  });
+}
+
 function sessionCookie(req, token) {
   const secure = req.headers["x-forwarded-proto"] === "https" || req.socket.encrypted;
   return [
@@ -760,6 +782,7 @@ async function handleGetMessages(req, res) {
     ok: true,
     messages,
     stale: refresh.stale,
+    online: publicClientCount(),
     lastLoadedAt: lastMessagesLoadAt
   });
 }
@@ -1301,6 +1324,11 @@ async function router(req, res) {
 
     if (req.method === "POST" && url.pathname === "/api/login") {
       await handleLogin(req, res);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/logout") {
+      handleLogout(req, res);
       return;
     }
 
