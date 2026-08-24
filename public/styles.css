@@ -240,7 +240,8 @@ button {
   box-shadow: 0 0 0 4px rgba(47, 177, 112, 0.16);
 }
 
-.call-button {
+.call-button,
+.logout-button {
   height: 36px;
   border: 0;
   border-radius: 8px;
@@ -250,8 +251,18 @@ button {
   font-weight: 700;
 }
 
-.call-button:hover {
+.call-button:hover,
+.logout-button:hover {
   background: #172026;
+}
+
+.logout-button {
+  color: #334047;
+  background: #edf3f1;
+}
+
+.logout-button:hover {
+  color: #fff;
 }
 
 .call-banner {
@@ -991,10 +1002,15 @@ button {
     gap: 8px;
   }
 
-  .call-button {
+  .call-button,
+  .logout-button {
     width: 42px;
     padding: 0;
     font-size: 12px;
+  }
+
+  .logout-button {
+    width: 64px;
   }
 
   .presence {
